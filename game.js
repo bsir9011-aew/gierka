@@ -2,16 +2,17 @@
 const scene=new THREE.Scene();scene.background=new THREE.Color(0x09101f);scene.fog=new THREE.Fog(0x09101f,85,300);
 const camera=new THREE.PerspectiveCamera(72,innerWidth/innerHeight,.1,420);camera.rotation.order='YXZ';scene.add(camera);
 const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(innerWidth,innerHeight);renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;document.body.appendChild(renderer.domElement);
-scene.add(new THREE.HemisphereLight(0xaadfff,0x182033,2));const sun=new THREE.DirectionalLight(0xffffff,2.15);sun.position.set(-28,42,32);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);scene.add(sun);
+scene.add(new THREE.HemisphereLight(0xaadfff,0x182033,2));
+const sun=new THREE.DirectionalLight(0xffffff,2.15);sun.position.set(-28,42,32);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);scene.add(sun);
 const ground=new THREE.Mesh(new THREE.PlaneGeometry(300,300),new THREE.MeshStandardMaterial({color:0x111827,roughness:1}));ground.rotation.x=-Math.PI/2;ground.position.y=-1;ground.receiveShadow=true;scene.add(ground);
 
-// v0.3: larger, scale-ready terraces with enough vertical clearance to walk underneath.
 const FLOOR_THICKNESS=.8;
 const floors=[
 {name:'Network Access',y:0,sx:56,sz:44,color:0x315f86,sub:'Ethernet • Wi-Fi • MAC'},
 {name:'Internet',y:5,sx:44,sz:34,color:0x3f7754,sub:'IP • ICMP • Routing'},
 {name:'Transport',y:10,sx:34,sz:24,color:0x89643a,sub:'TCP • UDP • Porty'},
 {name:'Application',y:15,sx:24,sz:16,color:0x764788,sub:'HTTP • DNS • SSH • SMTP'}];
+
 const info={
 'Ethernet':['Network Access','Dostarcza ramki w obrębie lokalnego segmentu sieci.',['Używa adresów MAC','Przenosi pakiet IP jako payload','Dodaje nagłówek i trailer ramki']],
 'MAC Address':['Network Access','Adres warstwy 2 używany lokalnie.',['MAC celu może należeć do bramy domyślnej','Router zmienia nagłówek warstwy 2 między sieciami','ARP pomaga ustalić MAC dla IPv4']],
@@ -21,47 +22,261 @@ const info={
 'UDP':['Transport','Bezpołączeniowy transport z małym narzutem.',['Brak handshake','Brak gwarancji dostarczenia','Często DNS, streaming i gry']],
 'DNS':['Application','Tłumaczy nazwy domenowe na adresy IP i odwrotnie.',['Często UDP/53','Może używać TCP','A = IPv4, AAAA = IPv6, CNAME = alias']],
 'HTTP/HTTPS':['Application','Protokół aplikacji webowych. HTTPS to HTTP chroniony przez TLS.',['HTTPS zwykle TCP/443','HTTP definiuje żądania i odpowiedzi','Routingiem zajmuje się niższa warstwa IP']]};
-function sprite(text,pos,scale=.5,color='#fff'){const c=document.createElement('canvas');c.width=1024;c.height=256;const x=c.getContext('2d');x.font='700 72px Arial';x.textAlign='center';x.textBaseline='middle';x.fillStyle=color;x.fillText(text,512,128);const s=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(c),transparent:true,depthTest:false}));s.position.copy(pos);s.scale.set(8*scale,2*scale,1);s.renderOrder=10;scene.add(s);return s}
-floors.forEach((f,i)=>{const geo=new THREE.BoxGeometry(f.sx,FLOOR_THICKNESS,f.sz);const m=new THREE.Mesh(geo,new THREE.MeshStandardMaterial({color:f.color,roughness:.84}));m.position.set(0,f.y-FLOOR_THICKNESS/2,0);m.receiveShadow=m.castShadow=true;scene.add(m);const e=new THREE.LineSegments(new THREE.EdgesGeometry(geo),new THREE.LineBasicMaterial({color:0xc9e9ff,transparent:true,opacity:.28}));e.position.copy(m.position);scene.add(e);const z=-f.sz/2+1.4;sprite(`${i+1}. ${f.name}`,new THREE.Vector3(0,f.y+2.7,z),.68);sprite(f.sub,new THREE.Vector3(0,f.y+1.72,z),.35,'#dce8ff')});
 
-// Stairs are visual steps; collision uses a smooth continuous ramp beneath them.
+function sprite(text,pos,scale=.5,color='#fff'){
+  const c=document.createElement('canvas');c.width=1024;c.height=256;
+  const x=c.getContext('2d');x.font='700 72px Arial';x.textAlign='center';x.textBaseline='middle';x.fillStyle=color;x.fillText(text,512,128);
+  const s=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(c),transparent:true,depthTest:false}));
+  s.position.copy(pos);s.scale.set(8*scale,2*scale,1);s.renderOrder=10;scene.add(s);return s
+}
+
+floors.forEach((f,i)=>{
+  const geo=new THREE.BoxGeometry(f.sx,FLOOR_THICKNESS,f.sz);
+  const m=new THREE.Mesh(geo,new THREE.MeshStandardMaterial({color:f.color,roughness:.84}));
+  m.position.set(0,f.y-FLOOR_THICKNESS/2,0);m.receiveShadow=m.castShadow=true;scene.add(m);
+  const e=new THREE.LineSegments(new THREE.EdgesGeometry(geo),new THREE.LineBasicMaterial({color:0xc9e9ff,transparent:true,opacity:.28}));
+  e.position.copy(m.position);scene.add(e);
+  const z=-f.sz/2+1.4;
+  sprite(`${i+1}. ${f.name}`,new THREE.Vector3(0,f.y+2.7,z),.68);
+  sprite(f.sub,new THREE.Vector3(0,f.y+1.72,z),.35,'#dce8ff')
+});
+
+// ---- SAFE STAIRS ------------------------------------------------------------
 const ramps=[];
-function addRamp(li,ui,side){const lo=floors[li],up=floors[ui],sgn=side;const start=new THREE.Vector2(sgn*(lo.sx/2-3),lo.sz/2-2.5);const end=new THREE.Vector2(sgn*(up.sx/2-2.5),up.sz/2-5);const width=2.25,steps=24;const dx=end.x-start.x,dz=end.y-start.y,L=Math.hypot(dx,dz),ang=Math.atan2(dx,dz);ramps.push({start,end,width,y0:lo.y,y1:up.y,li,ui});const mat=new THREE.MeshStandardMaterial({color:0x2b3953,roughness:.72});for(let i=0;i<steps;i++){const t=(i+.5)/steps,top=(i+1)/steps;const x=THREE.MathUtils.lerp(start.x,end.x,t),z=THREE.MathUtils.lerp(start.y,end.y,t),y=THREE.MathUtils.lerp(lo.y,up.y,top);const step=new THREE.Mesh(new THREE.BoxGeometry(width,.11,L/steps+.08),mat);step.position.set(x,y-.055,z);step.rotation.y=ang;step.castShadow=step.receiveShadow=true;scene.add(step)}sprite('↑',new THREE.Vector3((start.x+end.x)/2,(lo.y+up.y)/2+.7,(start.y+end.y)/2),.24,'#bfe3ff')}
-for(let i=0;i<3;i++){addRamp(i,i+1,-1);addRamp(i,i+1,1)}
-function rampSurface(x,z,r){const vx=r.end.x-r.start.x,vz=r.end.y-r.start.y,wx=x-r.start.x,wz=z-r.start.y,L2=vx*vx+vz*vz;let t=(wx*vx+wz*vz)/L2;if(t<0||t>1)return null;const px=r.start.x+t*vx,pz=r.start.y+t*vz;if(Math.hypot(x-px,z-pz)>r.width/2+.12)return null;return{y:THREE.MathUtils.lerp(r.y0,r.y1,t),layer:t<.5?r.li:r.ui,type:'ramp'}}
-function surfacesAt(x,z){const out=[{y:-1,layer:-1,type:'ground'}];for(let i=0;i<floors.length;i++){const f=floors[i];if(Math.abs(x)<=f.sx/2&&Math.abs(z)<=f.sz/2)out.push({y:f.y,layer:i,type:'floor'})}for(const r of ramps){const s=rampSurface(x,z,r);if(s)out.push(s)}return out}
-function supportUnder(x,z,feetY,maxRise=.45){let best={y:-1,layer:-1,type:'ground'};for(const s of surfacesAt(x,z)){if(s.y<=feetY+maxRise&&s.y>best.y)best=s}return best}
 
-const stations=[];const defs=[
+function cylinderBetween(a,b,r=.055,color=0x7385a4){
+  const d=new THREE.Vector3().subVectors(b,a),len=d.length();
+  const mesh=new THREE.Mesh(new THREE.CylinderGeometry(r,r,len,10),new THREE.MeshStandardMaterial({color,metalness:.45,roughness:.45}));
+  mesh.position.copy(a).add(b).multiplyScalar(.5);
+  mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),d.clone().normalize());
+  mesh.castShadow=true;scene.add(mesh);return mesh
+}
+
+function addRamp(li,ui,side){
+  const lo=floors[li],up=floors[ui],sgn=side;
+  const start=new THREE.Vector2(sgn*(lo.sx/2-4),lo.sz/2-2.5);
+  const end=new THREE.Vector2(sgn*(up.sx/2-3),up.sz/2-4);
+  const visualWidth=3.8,collisionWidth=5.0,steps=24,landing=1.35;
+  const dx=end.x-start.x,dz=end.y-start.y,L=Math.hypot(dx,dz),yaw=Math.atan2(dx,dz);
+  ramps.push({start,end,width:collisionWidth,y0:lo.y,y1:up.y,li,ui,landing});
+
+  const rise=up.y-lo.y,slopedLen=Math.hypot(L,rise);
+  const base=new THREE.Mesh(
+    new THREE.BoxGeometry(visualWidth-.25,.18,slopedLen),
+    new THREE.MeshStandardMaterial({color:0x202c43,roughness:.8})
+  );
+  base.position.set((start.x+end.x)/2,(lo.y+up.y)/2-.1,(start.y+end.y)/2);
+  base.rotation.order='YXZ';base.rotation.y=yaw;base.rotation.x=-Math.atan2(rise,L);
+  base.castShadow=base.receiveShadow=true;scene.add(base);
+
+  const stepMat=new THREE.MeshStandardMaterial({color:0x34445f,roughness:.7});
+  for(let i=0;i<steps;i++){
+    const t=(i+.5)/steps,top=(i+1)/steps;
+    const x=THREE.MathUtils.lerp(start.x,end.x,t),z=THREE.MathUtils.lerp(start.y,end.y,t),y=THREE.MathUtils.lerp(lo.y,up.y,top);
+    const step=new THREE.Mesh(new THREE.BoxGeometry(visualWidth,.13,L/steps+.12),stepMat);
+    step.position.set(x,y-.065,z);step.rotation.y=yaw;step.castShadow=step.receiveShadow=true;scene.add(step)
+  }
+
+  const padMat=new THREE.MeshStandardMaterial({color:0x2b3953,roughness:.72});
+  const ux=dx/L,uz=dz/L;
+  [
+    {x:start.x-ux*landing*.35,z:start.y-uz*landing*.35,y:lo.y},
+    {x:end.x+ux*landing*.35,z:end.y+uz*landing*.35,y:up.y}
+  ].forEach(p=>{
+    const pad=new THREE.Mesh(new THREE.BoxGeometry(visualWidth+.7,.12,landing*1.7),padMat);
+    pad.position.set(p.x,p.y-.06,p.z);pad.rotation.y=yaw;pad.castShadow=pad.receiveShadow=true;scene.add(pad)
+  });
+
+  const latX=dz/L,latZ=-dx/L,railOffset=visualWidth/2+.12;
+  [-1,1].forEach(s=>{
+    const a=new THREE.Vector3(start.x+latX*railOffset*s,lo.y+1.02,start.y+latZ*railOffset*s);
+    const b=new THREE.Vector3(end.x+latX*railOffset*s,up.y+1.02,end.y+latZ*railOffset*s);
+    cylinderBetween(a,b,.055);
+    for(let j=0;j<=4;j++){
+      const t=j/4;
+      const p=new THREE.Vector3(
+        THREE.MathUtils.lerp(start.x,end.x,t)+latX*railOffset*s,
+        THREE.MathUtils.lerp(lo.y,up.y,t),
+        THREE.MathUtils.lerp(start.y,end.y,t)+latZ*railOffset*s
+      );
+      cylinderBetween(p.clone(),p.clone().setY(p.y+1.02),.045)
+    }
+  });
+  sprite('↑ SCHODY',new THREE.Vector3((start.x+end.x)/2,(lo.y+up.y)/2+1.25,(start.y+end.y)/2),.26,'#cbe7ff')
+}
+
+addRamp(0,1,-1);
+addRamp(1,2,1);
+addRamp(2,3,-1);
+
+function rampSurface(x,z,r){
+  const vx=r.end.x-r.start.x,vz=r.end.y-r.start.y,wx=x-r.start.x,wz=z-r.start.y,L2=vx*vx+vz*vz,L=Math.sqrt(L2);
+  const raw=(wx*vx+wz*vz)/L2,extra=r.landing/L;
+  if(raw<-extra||raw>1+extra)return null;
+  const t=THREE.MathUtils.clamp(raw,0,1);
+  const px=r.start.x+raw*vx,pz=r.start.y+raw*vz;
+  if(Math.hypot(x-px,z-pz)>r.width/2)return null;
+  return{y:THREE.MathUtils.lerp(r.y0,r.y1,t),layer:t<.5?r.li:r.ui,type:'ramp'}
+}
+function surfacesAt(x,z){
+  const out=[{y:-1,layer:-1,type:'ground'}];
+  for(let i=0;i<floors.length;i++){
+    const f=floors[i];
+    if(Math.abs(x)<=f.sx/2&&Math.abs(z)<=f.sz/2)out.push({y:f.y,layer:i,type:'floor'})
+  }
+  for(const r of ramps){const s=rampSurface(x,z,r);if(s)out.push(s)}
+  return out
+}
+function supportUnder(x,z,feetY,maxRise=.45){
+  let best={y:-1,layer:-1,type:'ground'};
+  for(const s of surfacesAt(x,z)){if(s.y<=feetY+maxRise&&s.y>best.y)best=s}
+  return best
+}
+
+// ---- CONTENT STATIONS -------------------------------------------------------
+const stations=[];
+const defs=[
 ['Ethernet',0,-16,18,0x7fd8ff],['MAC Address',0,16,18,0x7fd8ff],
 ['IP',1,-12,13,0x92f0a5],['ICMP',1,12,13,0x92f0a5],
 ['TCP',2,-9,8,0xffc36c],['UDP',2,9,8,0xffc36c],
-['DNS',3,-6,3.5,0xe0a0ff],['HTTP/HTTPS',3,6,3.5,0xe0a0ff]];
-defs.forEach(([name,l,x,z,c])=>{const y=floors[l].y,b=new THREE.Mesh(new THREE.CylinderGeometry(1,1.25,.8,20),new THREE.MeshStandardMaterial({color:0x152038,metalness:.35}));b.position.set(x,y+.4,z);b.castShadow=true;scene.add(b);const o=new THREE.Mesh(new THREE.SphereGeometry(.64,22,14),new THREE.MeshStandardMaterial({color:c,emissive:c,emissiveIntensity:1.7}));o.position.set(x,y+1.65,z);o.castShadow=true;scene.add(o);sprite(name,new THREE.Vector3(x,y+2.95,z),.43);stations.push({name,l,orb:o,pos:o.position})});
-[-2.2,0,2.2].forEach(x=>{const rack=new THREE.Mesh(new THREE.BoxGeometry(1.25,2.1,.9),new THREE.MeshStandardMaterial({color:0x202d48,metalness:.3}));rack.position.set(x,floors[3].y+1.05,-2.7);rack.castShadow=true;scene.add(rack)});
+['DNS',3,-6,3.5,0xe0a0ff],['HTTP/HTTPS',3,6,3.5,0xe0a0ff]
+];
+defs.forEach(([name,l,x,z,c])=>{
+  const y=floors[l].y;
+  const b=new THREE.Mesh(new THREE.CylinderGeometry(1,1.25,.8,20),new THREE.MeshStandardMaterial({color:0x152038,metalness:.35}));
+  b.position.set(x,y+.4,z);b.castShadow=true;scene.add(b);
+  const o=new THREE.Mesh(new THREE.SphereGeometry(.64,22,14),new THREE.MeshStandardMaterial({color:c,emissive:c,emissiveIntensity:1.7}));
+  o.position.set(x,y+1.65,z);o.castShadow=true;scene.add(o);
+  sprite(name,new THREE.Vector3(x,y+2.95,z),.43);stations.push({name,l,orb:o,pos:o.position})
+});
+[-2.2,0,2.2].forEach(x=>{
+  const rack=new THREE.Mesh(new THREE.BoxGeometry(1.25,2.1,.9),new THREE.MeshStandardMaterial({color:0x202d48,metalness:.3}));
+  rack.position.set(x,floors[3].y+1.05,-2.7);rack.castShadow=true;scene.add(rack)
+});
 
-const EYE=1.68,STEP=.48,player={pos:new THREE.Vector3(0,EYE,19),yaw:Math.PI,pitch:-.05,speed:9.2,v:0,onGround:true};const keys={};let currentLayer=0,locked=false,panelOpen=false;camera.position.copy(player.pos);
+// ---- PLAYER ----------------------------------------------------------------
+const EYE=1.68,STEP=.48;
+const player={pos:new THREE.Vector3(0,EYE,19),yaw:Math.PI,pitch:-.05,speed:9.2,v:0,onGround:true};
+const keys={};let currentLayer=0,locked=false,panelOpen=false;
+camera.position.copy(player.pos);
 const badge=document.getElementById('floorBadge'),prompt=document.getElementById('prompt'),panel=document.getElementById('panel'),panelContent=document.getElementById('panelContent');
+
 function setBadge(){badge.textContent=currentLayer<0?'Poza piramidą':`Warstwa ${currentLayer+1}: ${floors[currentLayer].name}`}
 function toast(t){const e=document.getElementById('toast');e.textContent=t;e.style.opacity=1;clearTimeout(e._t);e._t=setTimeout(()=>e.style.opacity=0,1800)}
 function respawn(){player.pos.set(0,EYE,19);player.v=0;player.onGround=true;currentLayer=0;setBadge();toast('Powrót na Network Access')}
 function teleport(i){const f=floors[i],z=Math.max(0,f.sz/2-4);player.pos.set(0,f.y+EYE,z);player.v=0;player.onGround=true;currentLayer=i;setBadge();toast(`Warstwa ${i+1}: ${f.name}`)}
-function openPanel(name){const d=info[name];panelOpen=true;if(document.pointerLockElement)document.exitPointerLock();panelContent.innerHTML=`<span class="tag">${d[0]}</span><h2>${name}</h2><p>${d[1]}</p><ul>${d[2].map(v=>`<li>${v}</li>`).join('')}</ul>`;panel.style.display='block'}
+function openPanel(name){
+  const d=info[name];panelOpen=true;if(document.pointerLockElement)document.exitPointerLock();
+  panelContent.innerHTML=`<span class="tag">${d[0]}</span><h2>${name}</h2><p>${d[1]}</p><ul>${d[2].map(v=>`<li>${v}</li>`).join('')}</ul>`;
+  panel.style.display='block'
+}
 function closePanel(){panelOpen=false;panel.style.display='none';renderer.domElement.requestPointerLock()}
-document.getElementById('startBtn').onclick=()=>{document.getElementById('start').style.display='none';renderer.domElement.requestPointerLock()};renderer.domElement.onclick=()=>{if(!panelOpen&&document.getElementById('start').style.display==='none')renderer.domElement.requestPointerLock()};document.getElementById('closeBtn').onclick=closePanel;document.addEventListener('pointerlockchange',()=>locked=document.pointerLockElement===renderer.domElement);document.addEventListener('mousemove',e=>{if(!locked||panelOpen)return;player.yaw-=e.movementX*.0022;player.pitch=THREE.MathUtils.clamp(player.pitch-e.movementY*.0022,-1.45,1.45)});
-addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='Space'){e.preventDefault();if(player.onGround&&!panelOpen){player.v=7.2;player.onGround=false}}if(e.code==='KeyE'&&!panelOpen&&nearest&&nearest.d<3.2)openPanel(nearest.s.name);if(/^Digit[1-4]$/.test(e.code))teleport(+e.code.at(-1)-1);if(e.code==='KeyR')respawn();if(e.code==='Escape'&&panelOpen)closePanel()});addEventListener('keyup',e=>keys[e.code]=false);
 
-// Slow packet de-encapsulation demo.
-const packet=new THREE.Group(),core=new THREE.Mesh(new THREE.BoxGeometry(2,.85,1.15),new THREE.MeshStandardMaterial({color:0xffffff,emissive:0x4d6980,emissiveIntensity:.8}));packet.add(core);packet.add(new THREE.PointLight(0xb7ecff,2.5,9));scene.add(packet);packet.visible=false;const pathX=-35,path=floors.map(f=>new THREE.Vector3(pathX,f.y+1.6,0));scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(path),new THREE.LineBasicMaterial({color:0x8fe3ff,transparent:true,opacity:.3})));sprite('ŚCIEŻKA PAKIETU',new THREE.Vector3(pathX,18.8,0),.3,'#a5e1ff');let sim=null,label=null,speed=0;const modes=[['🐢 Pakiet: wolno',.65],['🚶 Pakiet: normalnie',1],['🏃 Pakiet: szybko',1.65]],labels=['ETH | IP | TCP | DATA','IP | TCP | DATA','TCP | DATA','DATA'];
-function packetLabel(t){if(label)packet.remove(label);const c=document.createElement('canvas');c.width=1000;c.height=180;const x=c.getContext('2d');x.fillStyle='#050a14dd';x.fillRect(25,20,950,140);x.strokeStyle='#b4ebff';x.lineWidth=4;x.strokeRect(25,20,950,140);x.fillStyle='#fff';x.font='700 52px Arial';x.textAlign='center';x.textBaseline='middle';x.fillText(t,500,90);label=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(c),transparent:true,depthTest:false}));label.scale.set(8,1.45,1);label.position.y=1.5;packet.add(label)}
-document.getElementById('speedBtn').onclick=()=>{speed=(speed+1)%modes.length;document.getElementById('speedBtn').textContent=modes[speed][0]};document.getElementById('missionBtn').onclick=()=>{sim={step:0,p:0,pause:1};packet.visible=true;packet.position.copy(path[0]);packetLabel(labels[0]);toast('Ramka Ethernet zawiera IP → TCP → DATA')};
+document.getElementById('startBtn').onclick=()=>{document.getElementById('start').style.display='none';renderer.domElement.requestPointerLock()};
+renderer.domElement.onclick=()=>{if(!panelOpen&&document.getElementById('start').style.display==='none')renderer.domElement.requestPointerLock()};
+document.getElementById('closeBtn').onclick=closePanel;
+document.addEventListener('pointerlockchange',()=>locked=document.pointerLockElement===renderer.domElement);
+document.addEventListener('mousemove',e=>{
+  if(!locked||panelOpen)return;
+  player.yaw-=e.movementX*.0022;player.pitch=THREE.MathUtils.clamp(player.pitch-e.movementY*.0022,-1.45,1.45)
+});
+addEventListener('keydown',e=>{
+  keys[e.code]=true;
+  if(e.code==='Space'){e.preventDefault();if(player.onGround&&!panelOpen){player.v=7.2;player.onGround=false}}
+  if(e.code==='KeyE'&&!panelOpen&&nearest&&nearest.d<3.2)openPanel(nearest.s.name);
+  if(/^Digit[1-4]$/.test(e.code))teleport(+e.code.at(-1)-1);
+  if(e.code==='KeyR')respawn();
+  if(e.code==='Escape'&&panelOpen)closePanel()
+});
+addEventListener('keyup',e=>keys[e.code]=false);
+
+// ---- PACKET DEMO ------------------------------------------------------------
+const packet=new THREE.Group();
+const core=new THREE.Mesh(new THREE.BoxGeometry(2,.85,1.15),new THREE.MeshStandardMaterial({color:0xffffff,emissive:0x4d6980,emissiveIntensity:.8}));
+packet.add(core);packet.add(new THREE.PointLight(0xb7ecff,2.5,9));scene.add(packet);packet.visible=false;
+const pathX=-35,path=floors.map(f=>new THREE.Vector3(pathX,f.y+1.6,0));
+scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(path),new THREE.LineBasicMaterial({color:0x8fe3ff,transparent:true,opacity:.3})));
+sprite('ŚCIEŻKA PAKIETU',new THREE.Vector3(pathX,18.8,0),.3,'#a5e1ff');
+let sim=null,label=null,speed=0;
+const modes=[['🐢 Pakiet: wolno',.65],['🚶 Pakiet: normalnie',1],['🏃 Pakiet: szybko',1.65]],labels=['ETH | IP | TCP | DATA','IP | TCP | DATA','TCP | DATA','DATA'];
+function packetLabel(t){
+  if(label)packet.remove(label);
+  const c=document.createElement('canvas');c.width=1000;c.height=180;const x=c.getContext('2d');
+  x.fillStyle='#050a14dd';x.fillRect(25,20,950,140);x.strokeStyle='#b4ebff';x.lineWidth=4;x.strokeRect(25,20,950,140);
+  x.fillStyle='#fff';x.font='700 52px Arial';x.textAlign='center';x.textBaseline='middle';x.fillText(t,500,90);
+  label=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(c),transparent:true,depthTest:false}));
+  label.scale.set(8,1.45,1);label.position.y=1.5;packet.add(label)
+}
+document.getElementById('speedBtn').onclick=()=>{speed=(speed+1)%modes.length;document.getElementById('speedBtn').textContent=modes[speed][0]};
+document.getElementById('missionBtn').onclick=()=>{sim={step:0,p:0,pause:1};packet.visible=true;packet.position.copy(path[0]);packetLabel(labels[0]);toast('Ramka Ethernet zawiera IP → TCP → DATA')};
+
 let nearest=null;const clock=new THREE.Clock();
-function update(dt){const fwd=new THREE.Vector3(-Math.sin(player.yaw),0,-Math.cos(player.yaw)),right=new THREE.Vector3(Math.cos(player.yaw),0,-Math.sin(player.yaw)),dir=new THREE.Vector3();if(keys.KeyW)dir.add(fwd);if(keys.KeyS)dir.sub(fwd);if(keys.KeyD)dir.add(right);if(keys.KeyA)dir.sub(right);
-const feetBefore=player.pos.y-EYE;const currentSupport=supportUnder(player.pos.x,player.pos.z,feetBefore,player.onGround?STEP:.06);
-if(dir.lengthSq()&&!panelOpen){dir.normalize().multiplyScalar(player.speed*((keys.ShiftLeft||keys.ShiftRight)?1.7:1)*dt);const nx=player.pos.x+dir.x,nz=player.pos.z+dir.z;const nextSupport=supportUnder(nx,nz,feetBefore,player.onGround?STEP:.06);const rise=nextSupport.y-currentSupport.y;if(!player.onGround||rise<=STEP){player.pos.x=nx;player.pos.z=nz;if(player.onGround&&nextSupport.y<currentSupport.y-.62){player.onGround=false;player.v=0}}}
-let feet=player.pos.y-EYE;if(!player.onGround){player.v-=15.5*dt;player.pos.y+=player.v*dt;feet=player.pos.y-EYE;const landing=supportUnder(player.pos.x,player.pos.z,feet,.08);if(player.v<=0&&feet<=landing.y+.08){player.pos.y=landing.y+EYE;player.v=0;player.onGround=true}}else{const support=supportUnder(player.pos.x,player.pos.z,feet,STEP);const target=support.y+EYE,d=target-player.pos.y;if(Math.abs(d)<.85)player.pos.y=THREE.MathUtils.lerp(player.pos.y,target,Math.min(1,dt*24));else if(d<-.85){player.onGround=false;player.v=0}}
-if(player.pos.y<-10)respawn();const supportNow=supportUnder(player.pos.x,player.pos.z,player.pos.y-EYE,STEP);const L=supportNow.layer;if(L!==currentLayer){currentLayer=L;setBadge();toast(L<0?'Poza piramidą':`Warstwa ${L+1}: ${floors[L].name}`)}camera.position.copy(player.pos);camera.rotation.y=player.yaw;camera.rotation.x=player.pitch;
-nearest=null;stations.forEach(s=>{const d=player.pos.distanceTo(s.pos);s.orb.rotation.y+=dt*.8;s.orb.scale.setScalar(1+Math.sin(performance.now()*.004+s.l)*.05);if(!nearest||d<nearest.d)nearest={s,d}});prompt.style.display=nearest&&nearest.d<3.2&&!panelOpen?'block':'none';
-if(sim){const fac=modes[speed][1];if(sim.pause>0)sim.pause-=dt*fac;else if(sim.step<3){sim.p+=dt*fac/5.8;const p=Math.min(sim.p,1),e=p<.5?2*p*p:1-Math.pow(-2*p+2,2)/2;packet.position.lerpVectors(path[sim.step],path[sim.step+1],e);if(p>=1){sim.step++;sim.p=0;sim.pause=1.5;packetLabel(labels[sim.step]);toast(['','Ethernet zdjęty - zostaje IP | TCP | DATA','IP zdjęty - zostaje TCP | DATA','TCP zdjęty - aplikacja dostaje DATA'][sim.step])}}else if((sim.pause-=dt)<-2.8){packet.visible=false;sim=null;toast('Dane dotarły do aplikacji')}}}
-function loop(){requestAnimationFrame(loop);update(Math.min(clock.getDelta(),.05));renderer.render(scene,camera)}loop();addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
+
+function update(dt){
+  const fwd=new THREE.Vector3(-Math.sin(player.yaw),0,-Math.cos(player.yaw));
+  const right=new THREE.Vector3(Math.cos(player.yaw),0,-Math.sin(player.yaw));
+  const dir=new THREE.Vector3();
+  if(keys.KeyW)dir.add(fwd);if(keys.KeyS)dir.sub(fwd);if(keys.KeyD)dir.add(right);if(keys.KeyA)dir.sub(right);
+
+  const feetBefore=player.pos.y-EYE;
+  const currentSupport=supportUnder(player.pos.x,player.pos.z,feetBefore,player.onGround?STEP:.06);
+
+  if(dir.lengthSq()&&!panelOpen){
+    dir.normalize().multiplyScalar(player.speed*((keys.ShiftLeft||keys.ShiftRight)?1.7:1)*dt);
+    const nx=player.pos.x+dir.x,nz=player.pos.z+dir.z;
+    const nextSupport=supportUnder(nx,nz,feetBefore,player.onGround?STEP:.06);
+    const rise=nextSupport.y-currentSupport.y;
+
+    const terraceDrop=player.onGround&&currentSupport.type==='floor'&&currentSupport.layer>0&&nextSupport.y<currentSupport.y-1.1;
+    const stairSlip=player.onGround&&currentSupport.type==='ramp'&&nextSupport.y<currentSupport.y-.9;
+
+    if(!terraceDrop&&!stairSlip&&(!player.onGround||rise<=STEP)){
+      player.pos.x=nx;player.pos.z=nz;
+      if(player.onGround&&nextSupport.y<currentSupport.y-.62){player.onGround=false;player.v=0}
+    }
+  }
+
+  let feet=player.pos.y-EYE;
+  if(!player.onGround){
+    player.v-=15.5*dt;player.pos.y+=player.v*dt;feet=player.pos.y-EYE;
+    const landing=supportUnder(player.pos.x,player.pos.z,feet,.08);
+    if(player.v<=0&&feet<=landing.y+.08){player.pos.y=landing.y+EYE;player.v=0;player.onGround=true}
+  }else{
+    const support=supportUnder(player.pos.x,player.pos.z,feet,STEP);
+    const target=support.y+EYE,d=target-player.pos.y;
+    if(Math.abs(d)<.85)player.pos.y=THREE.MathUtils.lerp(player.pos.y,target,Math.min(1,dt*24));
+    else if(d<-.85){player.onGround=false;player.v=0}
+  }
+
+  if(player.pos.y<-10)respawn();
+  const supportNow=supportUnder(player.pos.x,player.pos.z,player.pos.y-EYE,STEP);
+  const L=supportNow.layer;
+  if(L!==currentLayer){currentLayer=L;setBadge();toast(L<0?'Poza piramidą':`Warstwa ${L+1}: ${floors[L].name}`)}
+
+  camera.position.copy(player.pos);camera.rotation.y=player.yaw;camera.rotation.x=player.pitch;
+
+  nearest=null;
+  stations.forEach(s=>{
+    const d=player.pos.distanceTo(s.pos);s.orb.rotation.y+=dt*.8;s.orb.scale.setScalar(1+Math.sin(performance.now()*.004+s.l)*.05);
+    if(!nearest||d<nearest.d)nearest={s,d}
+  });
+  prompt.style.display=nearest&&nearest.d<3.2&&!panelOpen?'block':'none';
+
+  if(sim){
+    const fac=modes[speed][1];
+    if(sim.pause>0)sim.pause-=dt*fac;
+    else if(sim.step<3){
+      sim.p+=dt*fac/5.8;const p=Math.min(sim.p,1),e=p<.5?2*p*p:1-Math.pow(-2*p+2,2)/2;
+      packet.position.lerpVectors(path[sim.step],path[sim.step+1],e);
+      if(p>=1){
+        sim.step++;sim.p=0;sim.pause=1.5;packetLabel(labels[sim.step]);
+        toast(['','Ethernet zdjęty - zostaje IP | TCP | DATA','IP zdjęty - zostaje TCP | DATA','TCP zdjęty - aplikacja dostaje DATA'][sim.step])
+      }
+    }else if((sim.pause-=dt)<-2.8){packet.visible=false;sim=null;toast('Dane dotarły do aplikacji')}
+  }
+}
+
+function loop(){requestAnimationFrame(loop);update(Math.min(clock.getDelta(),.05));renderer.render(scene,camera)}
+loop();
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
 })();
