@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TCP/IP Tower - 3D Learning Game</title>
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #0b1020; font-family: Inter, system-ui, Arial, sans-serif; }
+    canvas { display:block; }
+    #hud { position: fixed; inset: 0; pointer-events: none; color: white; }
+    #topbar { position:absolute; left:16px; top:16px; background:rgba(7,12,24,.78); border:1px solid rgba(255,255,255,.15); border-radius:12px; padding:10px 12px; max-width:430px; backdrop-filter: blur(8px); }
+    #topbar b { color:#8fe3ff; }
+    #hint { font-size:13px; opacity:.86; margin-top:6px; line-height:1.45; }
+    #crosshair { position:absolute; left:50%; top:50%; width:16px; height:16px; transform:translate(-50%,-50%); }
+    #crosshair:before, #crosshair:after { content:""; position:absolute; background:#fff; opacity:.9; }
+    #crosshair:before { width:2px; height:16px; left:7px; top:0; }
+    #crosshair:after { width:16px; height:2px; left:0; top:7px; }
+    #prompt { position:absolute; left:50%; bottom:82px; transform:translateX(-50%); background:rgba(0,0,0,.7); padding:10px 14px; border-radius:10px; border:1px solid rgba(255,255,255,.18); display:none; font-size:14px; }
+    #panel { position:absolute; right:18px; top:18px; width:min(390px, calc(100vw - 36px)); max-height:calc(100vh - 36px); overflow:auto; background:rgba(7,12,24,.92); border:1px solid rgba(255,255,255,.16); border-radius:16px; padding:18px; box-shadow:0 18px 50px rgba(0,0,0,.45); display:none; pointer-events:auto; }
+    #panel h2 { margin:0 0 8px; font-size:22px; color:#9ee6ff; }
+    #panel .tag { display:inline-block; font-size:12px; padding:4px 8px; border-radius:999px; background:#1d2a46; margin-bottom:10px; }
+    #panel p, #panel li { line-height:1.5; color:#dce8ff; }
+    #panel ul { padding-left:20px; }
+    #panel button, #missionBtn { pointer-events:auto; border:none; border-radius:10px; padding:10px 12px; cursor:pointer; font-weight:700; }
+    #panel button { background:#9ee6ff; color:#08111c; }
+    #closeBtn { float:right; margin-left:8px; background:#27334d !important; color:#fff !important; }
+    #floorBadge { position:absolute; left:16px; bottom:16px; background:rgba(7,12,24,.78); border:1px solid rgba(255,255,255,.15); border-radius:12px; padding:10px 12px; font-weight:700; }
+    #missionBtn { position:absolute; right:18px; bottom:18px; background:#ffdd7d; color:#17120a; }
+    #toast { position:absolute; left:50%; top:24px; transform:translateX(-50%); background:rgba(11,18,34,.94); border:1px solid rgba(255,255,255,.14); border-radius:12px; padding:10px 14px; opacity:0; transition:opacity .25s; }
+    #start { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:radial-gradient(circle at center, #17244a, #090d18 70%); z-index:3; color:white; }
+    .card { width:min(650px, calc(100vw - 40px)); background:rgba(10,16,30,.9); border:1px solid rgba(255,255,255,.14); border-radius:18px; padding:28px; box-shadow:0 25px 80px rgba(0,0,0,.45); }
+    .card h1 { margin:0 0 10px; font-size:34px; }
+    .card p { color:#dce7ff; line-height:1.55; }
+    .card button { border:0; border-radius:12px; padding:12px 16px; font-weight:800; background:#8fe3ff; color:#071019; cursor:pointer; }
+    .keys { display:grid; grid-template-columns:auto 1fr; gap:6px 12px; font-size:14px; color:#cdd9ef; margin:14px 0 18px; }
+    kbd { background:#1d2942; border:1px solid #42506a; border-bottom-width:3px; border-radius:6px; padding:2px 7px; color:white; }
+  </style>
+</head>
+<body>
+<div id="start">
+  <div class="card">
+    <h1>TCP/IP Tower</h1>
+    <p>Mini-gra 3D do chodzenia po czterech warstwach modelu TCP/IP. Podejdź do stanowiska i naciśnij <b>E</b>, żeby zobaczyć, co dana warstwa lub protokół robi.</p>
+    <div class="keys">
+      <kbd>W A S D</kbd><span>ruch</span>
+      <kbd>Mysz</kbd><span>rozglądanie</span>
+      <kbd>E</kbd><span>interakcja</span>
+      <kbd>1-4</kbd><span>szybki teleport między warstwami</span>
+      <kbd>ESC</kbd><span>uwolnij kursor / zamknij panel</span>
+    </div>
+    <button id="startBtn">Wejdź do wieży</button>
+  </div>
+</div>
+<div id="hud">
+  <div id="topbar"><b>TCP/IP Tower</b><div id="hint">Podejdź do świecących stanowisk. Naciśnij <b>E</b>, aby wejść w szczegóły. Klawisze <b>1-4</b> zmieniają warstwę.</div></div>
+  <div id="crosshair"></div>
+  <div id="prompt">E - interakcja</div>
+  <div id="floorBadge">Warstwa: Application</div>
+  <button id="missionBtn">▶ Symuluj pakiet</button>
+  <div id="toast"></div>
+  <div id="panel">
+    <button id="closeBtn">✕</button>
+    <div id="panelContent"></div>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+(() => {
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0a1020);
+  scene.fog = new THREE.Fog(0x0a1020, 40, 115);
+
+  const camera = new THREE.PerspectiveCamera(72, innerWidth/innerHeight, 0.1, 200);
+  camera.rotation.order = 'YXZ';
+  scene.add(camera);
+
+  const renderer = new THREE.WebGLRenderer({antialias:true});
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.shadowMap.enabled = true;
+  document.body.appendChild(renderer.domElement);
+
+  scene.add(new THREE.HemisphereLight(0xaadfff, 0x1b2233, 1.7));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.7);
+  sun.position.set(8, 22, 10); sun.castShadow = true; scene.add(sun);
+
+  const floors = [
+    {name:'Network Access', y:0, color:0x315a7a, subtitle:'Ethernet • Wi-Fi • MAC'},
+    {name:'Internet', y:8, color:0x3d6b4c, subtitle:'IP • ICMP • Routing'},
+    {name:'Transport', y:16, color:0x7b5b34, subtitle:'TCP • UDP • Porty'},
+    {name:'Application', y:24, color:0x6b3d78, subtitle:'HTTP • DNS • SSH • SMTP'}
+  ];
+
+  const stations = [];
+  const info = {
+    'Ethernet': {layer:'Network Access', desc:'Dostarcza ramki w obrębie lokalnego segmentu sieci.', bullets:['Używa adresów MAC','Przenosi pakiet IP jako payload','Na tej warstwie pojawia się nagłówek i trailer ramki']},
+    'MAC Address': {layer:'Network Access', desc:'Identyfikator interfejsu w lokalnej sieci warstwy 2.', bullets:['Router nie routuje po MAC między sieciami','MAC celu może należeć do bramy domyślnej','ARP pomaga ustalić MAC dla IPv4']},
+    'IP': {layer:'Internet', desc:'Odpowiada za adresowanie hostów i przenoszenie pakietów między sieciami.', bullets:['Adres źródłowy i docelowy','Router wybiera następną drogę','IP nie gwarantuje dostarczenia']},
+    'ICMP': {layer:'Internet', desc:'Komunikaty kontrolne i diagnostyczne dla IP.', bullets:['ping używa ICMP Echo','traceroute wykorzystuje zmianę TTL','Błędy typu Destination Unreachable']},
+    'TCP': {layer:'Transport', desc:'Niezawodny, połączeniowy transport między procesami.', bullets:['SYN → SYN-ACK → ACK','Numery sekwencyjne i potwierdzenia','Retransmisja utraconych segmentów','Porty identyfikują proces/usługę']},
+    'UDP': {layer:'Transport', desc:'Prosty, bezpołączeniowy transport bez gwarancji dostarczenia.', bullets:['Mały narzut','Brak handshake','Często DNS, streaming i gry czasu rzeczywistego']},
+    'DNS': {layer:'Application', desc:'Tłumaczy nazwy domenowe na adresy IP i odwrotnie.', bullets:['Zapytania często UDP/53','Może używać TCP','A = IPv4, AAAA = IPv6, CNAME = alias']},
+    'HTTP/HTTPS': {layer:'Application', desc:'Protokół komunikacji aplikacji webowych. HTTPS = HTTP chroniony przez TLS.', bullets:['HTTP: semantyka żądań i odpowiedzi','HTTPS zwykle TCP/443','Warstwa aplikacji nie zajmuje się routingiem']}
+  };
+
+  function addTextSprite(text, position, scale=1.0) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1024; canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.font = '700 72px Arial'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillStyle='rgba(255,255,255,.96)';
+    ctx.fillText(text, canvas.width/2, canvas.height/2);
+    const tex = new THREE.CanvasTexture(canvas);
+    const mat = new THREE.SpriteMaterial({map:tex, transparent:true});
+    const sp = new THREE.Sprite(mat); sp.position.copy(position); sp.scale.set(8*scale,2*scale,1); scene.add(sp); return sp;
+  }
+
+  floors.forEach((f,i) => {
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(28,0.8,24), new THREE.MeshStandardMaterial({color:f.color, roughness:.85}));
+    floor.position.set(0,f.y-0.45,0); floor.receiveShadow=true; scene.add(floor);
+    const railMat = new THREE.MeshStandardMaterial({color:0x22304a, metalness:.2, roughness:.65});
+    [[0,2.2,-11.5],[0,2.2,11.5],[-13.5,2.2,0],[13.5,2.2,0]].forEach((p,idx)=>{
+      const geo = (idx<2)? new THREE.BoxGeometry(27,.18,.18) : new THREE.BoxGeometry(.18,.18,23);
+      const r = new THREE.Mesh(geo,railMat); r.position.set(p[0],f.y+p[1],p[2]); scene.add(r);
+    });
+    addTextSprite(`${i+1}. ${f.name}`, new THREE.Vector3(0,f.y+3.8,-10.9), .72);
+    addTextSprite(f.subtitle, new THREE.Vector3(0,f.y+2.5,-10.8), .42);
+  });
+
+  const stationDefs = [
+    ['Ethernet',0,-7,-2,0x7fd8ff], ['MAC Address',0,7,-2,0x7fd8ff],
+    ['IP',8,-7,-2,0x92f0a5], ['ICMP',8,7,-2,0x92f0a5],
+    ['TCP',16,-7,-2,0xffc36c], ['UDP',16,7,-2,0xffc36c],
+    ['DNS',24,-7,-2,0xe0a0ff], ['HTTP/HTTPS',24,7,-2,0xe0a0ff]
+  ];
+
+  stationDefs.forEach(([name,y,x,z,color])=>{
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(1.15,1.35,1,20), new THREE.MeshStandardMaterial({color:0x152038, metalness:.4, roughness:.5}));
+    base.position.set(x,y+0.5,z); base.castShadow=true; scene.add(base);
+    const orb = new THREE.Mesh(new THREE.SphereGeometry(.65,24,16), new THREE.MeshStandardMaterial({color, emissive:color, emissiveIntensity:1.8, roughness:.25}));
+    orb.position.set(x,y+1.75,z); scene.add(orb);
+    addTextSprite(name,new THREE.Vector3(x,y+3.0,z),.48);
+    stations.push({name,pos:orb.position,orb});
+  });
+
+  // simple elevator markers at the back of each floor
+  floors.forEach((f,i)=>{
+    const pad = new THREE.Mesh(new THREE.CylinderGeometry(2,2,.12,36), new THREE.MeshStandardMaterial({color:0x202b40, emissive:0x183040, emissiveIntensity:.6}));
+    pad.position.set(0,f.y+0.06,7); scene.add(pad);
+    addTextSprite(`Teleport ${i+1}`,new THREE.Vector3(0,f.y+1.0,7),.35);
+  });
+
+  // Player state
+  const player = {pos:new THREE.Vector3(0,25.7,5), yaw:Math.PI, pitch:0, speed:8};
+  let currentFloor = 3;
+  const keys = {};
+  let locked=false, panelOpen=false;
+  camera.position.copy(player.pos);
+
+  function clampToFloor(){
+    player.pos.x = THREE.MathUtils.clamp(player.pos.x,-12.4,12.4);
+    player.pos.z = THREE.MathUtils.clamp(player.pos.z,-10.4,10.4);
+    player.pos.y = floors[currentFloor].y + 1.7;
+  }
+
+  function teleport(i){ currentFloor=i; player.pos.set(0,floors[i].y+1.7,5); updateFloorBadge(); showToast(`Warstwa ${i+1}: ${floors[i].name}`); }
+  function updateFloorBadge(){ document.getElementById('floorBadge').textContent=`Warstwa ${currentFloor+1}: ${floors[currentFloor].name}`; }
+
+  document.getElementById('startBtn').onclick=()=>{ document.getElementById('start').style.display='none'; renderer.domElement.requestPointerLock(); };
+  renderer.domElement.addEventListener('click',()=>{ if(!panelOpen && document.getElementById('start').style.display==='none') renderer.domElement.requestPointerLock(); });
+  document.addEventListener('pointerlockchange',()=>{ locked = document.pointerLockElement===renderer.domElement; });
+  document.addEventListener('mousemove',e=>{
+    if(!locked || panelOpen) return;
+    player.yaw -= e.movementX*0.0022;
+    player.pitch -= e.movementY*0.0022;
+    player.pitch = THREE.MathUtils.clamp(player.pitch,-1.45,1.45);
+  });
+  addEventListener('keydown',e=>{
+    keys[e.code]=true;
+    if(e.code==='KeyE' && !panelOpen) interact();
+    if(['Digit1','Digit2','Digit3','Digit4'].includes(e.code)) teleport(Number(e.code.slice(-1))-1);
+    if(e.code==='Escape' && panelOpen) closePanel();
+  });
+  addEventListener('keyup',e=>keys[e.code]=false);
+
+  let nearest=null;
+  function interact(){ if(nearest && nearest.dist<3.2) openPanel(nearest.station.name); }
+
+  function openPanel(name){
+    const d=info[name]; if(!d) return;
+    panelOpen=true; if(document.pointerLockElement) document.exitPointerLock();
+    document.getElementById('panelContent').innerHTML=`<span class="tag">${d.layer}</span><h2>${name}</h2><p>${d.desc}</p><ul>${d.bullets.map(b=>`<li>${b}</li>`).join('')}</ul>`;
+    document.getElementById('panel').style.display='block';
+  }
+  function closePanel(){ panelOpen=false; document.getElementById('panel').style.display='none'; renderer.domElement.requestPointerLock(); }
+  document.getElementById('closeBtn').onclick=closePanel;
+
+  function showToast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.style.opacity=1; clearTimeout(t._to); t._to=setTimeout(()=>t.style.opacity=0,1800); }
+
+  // Packet simulation
+  const packet = new THREE.Group();
+  const core = new THREE.Mesh(new THREE.BoxGeometry(1.8,.8,1.1),new THREE.MeshStandardMaterial({color:0xffffff, emissive:0x4d6980, emissiveIntensity:.6}));
+  packet.add(core); scene.add(packet); packet.visible=false;
+  let sim=null;
+  const simLabels = ['ETH | IP | TCP | DATA','IP | TCP | DATA','TCP | DATA','DATA'];
+  document.getElementById('missionBtn').onclick=()=>{
+    sim={t:0,step:0}; packet.visible=true; packet.position.set(0,1.5,1.0); addPacketLabel(simLabels[0]); showToast('Pakiet startuje od Network Access i wspina się do aplikacji');
+  };
+  let packetLabel=null;
+  function addPacketLabel(txt){
+    if(packetLabel) scene.remove(packetLabel);
+    const c=document.createElement('canvas'); c.width=1024; c.height=180; const x=c.getContext('2d'); x.font='700 58px Arial'; x.textAlign='center'; x.textBaseline='middle'; x.fillStyle='white'; x.fillText(txt,512,90);
+    const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(c),transparent:true})); sp.scale.set(7,1.3,1); sp.position.set(0,1.2,0); packet.add(sp); packetLabel=sp;
+  }
+
+  const clock=new THREE.Clock();
+  function update(dt){
+    const fwd = new THREE.Vector3(-Math.sin(player.yaw),0,-Math.cos(player.yaw));
+    const right = new THREE.Vector3(Math.cos(player.yaw),0,-Math.sin(player.yaw));
+    const move=new THREE.Vector3();
+    if(keys.KeyW) move.add(fwd); if(keys.KeyS) move.sub(fwd); if(keys.KeyD) move.add(right); if(keys.KeyA) move.sub(right);
+    if(move.lengthSq()>0 && !panelOpen){ move.normalize().multiplyScalar(player.speed*dt); player.pos.add(move); clampToFloor(); }
+    camera.position.copy(player.pos); camera.rotation.y=player.yaw; camera.rotation.x=player.pitch;
+
+    nearest=null;
+    stations.forEach(s=>{
+      const dist=player.pos.distanceTo(s.pos);
+      s.orb.rotation.y += dt*.8;
+      const pulse=1+Math.sin(performance.now()*.004)*.05; s.orb.scale.setScalar(pulse);
+      if(s.pos.y > floors[currentFloor].y && s.pos.y < floors[currentFloor].y+4 && (!nearest || dist<nearest.dist)) nearest={station:s,dist};
+    });
+    document.getElementById('prompt').style.display = nearest && nearest.dist<3.2 && !panelOpen ? 'block':'none';
+
+    if(sim){
+      sim.t += dt;
+      const duration=1.75; const p=Math.min(sim.t/duration,1);
+      const y0=floors[sim.step].y+1.5; const y1=floors[Math.min(sim.step+1,3)].y+1.5;
+      packet.position.y = THREE.MathUtils.lerp(y0,y1,p);
+      packet.rotation.y += dt*1.8;
+      if(p>=1){
+        sim.t=0; sim.step++;
+        if(sim.step>=3){ addPacketLabel(simLabels[3]); showToast('Pakiet dotarł do warstwy Application'); setTimeout(()=>packet.visible=false,1600); sim=null; }
+        else { addPacketLabel(simLabels[sim.step]); showToast(`Warstwa ${sim.step+1}: ${floors[sim.step].name}`); }
+      }
+    }
+  }
+
+  function loop(){ requestAnimationFrame(loop); update(Math.min(clock.getDelta(),.05)); renderer.render(scene,camera); }
+  loop();
+  addEventListener('resize',()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); });
+})();
+</script>
+</body>
+</html>
